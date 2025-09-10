@@ -1332,7 +1332,7 @@ class ManagerGenerate(Manager):
                                 labels[2] = value
                             if value in ("base", "devel", "runtime"):
                                 labels[3] = value
-                            if re.compile(r"centos*|ubuntu*|ubi*|rocky*|oracle*|amzn*|cm.|azl.").match(value):
+                            if re.compile(r"centos*|ubuntu*|ubi*|rocky*|oracle*|amzn*|cm.|azl.|opensuse*").match(value):
                                 operating_system = value.split("-")
                                 labels[4] = operating_system[0]
                                 dotdistro = labels[4]
@@ -1409,6 +1409,10 @@ class ManagerGenerate(Manager):
             elif "azl" in OS:
                 distro = OS.split("azl")
                 platforms[OS]["name"] = f"AZL {distro[1]}"
+                platforms[OS]["arches"] = get_arches_for_platform(OS)
+            elif "opensuse" in OS:
+                distro = OS.split("opensuse")
+                platforms[OS]["name"] = f"OpenSuse {distro[1]}"
                 platforms[OS]["arches"] = get_arches_for_platform(OS)
             else:
                 distro = OS.split("ubi")

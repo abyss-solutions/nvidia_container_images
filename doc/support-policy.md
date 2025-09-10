@@ -12,8 +12,6 @@ Going forward,
 
  - After a period of Six Months time, the EOL tags **WILL BE DELETED from Docker Hub and Nvidia GPU Cloud (NGC)**. This deletion ensures unsupported tags (and image layers) are not left lying around for customers to continue using after they have long been abandoned.
 
-Please see the [EOL chart](container_tags.pdf) for driver EOL and approx container tags deletion dates.
-
 ## Why
 
 Earlier this year, we had to change the CUDA repo signing key. This had a reverberating impact across many parts of the software we support, but the worst and most surprising were the CUDA Container Images. We found many of our customers were still using no longer supported image tags that we had no way to easily update. Since there has never been a formal support policy in place, we had to update all currently supported image sets and revive legacy code to rebuild old unsupported image sets, and in some cases even this was not feasible.
