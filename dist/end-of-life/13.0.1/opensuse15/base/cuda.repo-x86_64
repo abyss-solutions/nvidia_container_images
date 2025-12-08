@@ -1,0 +1,7 @@
+[cuda]
+name=cuda
+enabled=1
+autorefresh=0
+baseurl=https://developer.download.nvidia.com/compute/cuda/repos/opensuse15/x86_64
+gpgcheck=1
+gpgkey=https://developer.download.nvidia.com/compute/cuda/repos/opensuse15/x86_64/D42D0685.pub
