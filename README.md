@@ -1,3 +1,20 @@
+# Abyss fork of CUDA image builder
+
+This fork exists to support building `cudagl` images with `cuDNN` support from the `devel` image
+
+Example invocation for this use case is:
+
+    ./build.sh \
+        --debug \
+        --image-name <desired-final-image-URI> \
+        --cuda-version 11.8.0-cudnn8 \
+        --os ubuntu \
+        --os-version 22.04 \
+        --arch x86_64 \
+        --cudagl \
+        --devel
+
+
 # Nvidia CUDA Linux Container Image Sources
 
 Usage of the CUDA container images requires the [Nvidia Container Toolkit](https://github.com/NVIDIA/nvidia-container-toolkit).

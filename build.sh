@@ -9,6 +9,7 @@ CUDA_IMAGE="nvcr.io/nvidia/cuda"
 LIBGLVND_VERSION="v1.2.0"
 
 IMAGE_NAME=""
+BASE_IMAGE_NAME="base"
 CGL_INTER_IMAGE_NAME_SUFFIX="/build-intermediate"
 CUDA_VERSION=""
 OS=""
@@ -118,6 +119,7 @@ usage() {
     echo "    --arch=csv            - Target architectures as a comma separated string."
     echo "    --kitpick             - Build from the kitpick directory."
     echo "    --cudagl              - Build a cudagl image set. x86_64 only."
+    echo "    --devel               - Build from the devel image set (required when building with cuDNN). Default: build from base"
     echo
     exit 155
 }
@@ -207,6 +209,10 @@ main() {
         elif [[ ${args[$a]} == "--cudagl" ]]; then
             debug "found command '${args[$a]}'"
             build_cudagl=1
+        elif [[ ${args[$a]} == "--devel" ]]; then
+            debug "found command '${args[$a]}'"
+            BASE_IMAGE_NAME=devel
+            debug "BASE_IMAGE_NAME=${BASE_IMAGE_NAME}"
         elif [[ ${args[$a]} == "--image-name" ]]; then
             debug "found command '${args[$a]}'"
             IMAGE_NAME=${args[(($a+1))]}
@@ -250,7 +256,7 @@ main() {
         run_cmd cp -R entrypoint.d nvidia_entrypoint.sh ${BASE_PATH}/${OS_PATH_NAME}/runtime/
 
         run_cmd docker buildx build --pull ${LOAD_ARG} ${PUSH_ARG} ${PLATFORM_ARG} \
-            -t "${IMAGE_NAME}:${CUDA_VERSION}-base-${OS}${OS_VERSION}${IMAGE_SUFFIX:+-${IMAGE_SUFFIX}}" \
+            -t "${IMAGE_NAME}:${CUDA_VERSION}-${BASE_IMAGE_NAME}-${OS}${OS_VERSION}${IMAGE_SUFFIX:+-${IMAGE_SUFFIX}}" \
             "${BASE_PATH}/${OS_PATH_NAME}/base"
 
         run_cmd docker buildx build --pull ${LOAD_ARG} ${PUSH_ARG} ${PLATFORM_ARG} \
@@ -276,7 +282,7 @@ main() {
         debug "CGL_INTER_IMAGE_NAME=${CGL_INTER_IMAGE_NAME}"
 
         run_cmd docker build  -t "${CGL_INTER_IMAGE_NAME}:${CUDA_VERSION}-base-base-${OS}${OS_VERSION}" \
-                     --build-arg "from=${CUDA_IMAGE}:${CUDA_VERSION}-base-${OS}${OS_VERSION}${IMAGE_SUFFIX:+-${IMAGE_SUFFIX}}" \
+                     --build-arg "from=${CUDA_IMAGE}:${CUDA_VERSION}-${BASE_IMAGE_NAME}-${OS}${OS_VERSION}${IMAGE_SUFFIX:+-${IMAGE_SUFFIX}}" \
                      "opengl/base"
         run_cmd docker build  -t "${CGL_INTER_IMAGE_NAME}:${CUDA_VERSION}-base-runtime-${OS}${OS_VERSION}" \
                      --build-arg "from=${CGL_INTER_IMAGE_NAME}:${CUDA_VERSION}-base-base-${OS}${OS_VERSION}" \
