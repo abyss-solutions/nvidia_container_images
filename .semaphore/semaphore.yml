@@ -1,0 +1,68 @@
+version: v1.0
+name: Pipeline
+agent:
+  machine:
+    type: f1-standard-2
+    os_image: ubuntu2404
+fail_fast:
+  cancel:
+    when: branch != 'main'
+auto_cancel:
+  running:
+    when: branch != 'main'
+  queued:
+    when: branch != 'main'
+blocks:
+  - name: Docker update latest image and push to ECR
+    skip:
+      when: branch != 'main'
+    task:
+      env_vars:
+        - name: AWS_DEFAULT_REGION
+          value: eu-central-1
+        - name: ECR_REGISTRY
+          value: 016735869948.dkr.ecr.eu-central-1.amazonaws.com/abyss/cudagl
+      secrets:
+        - name: aws-ecr-secrets
+        - name: sem-cli-access-token
+        - name: infra-github-push-key
+      prologue:
+        commands:
+          - checkout
+          - aws ecr get-login-password | docker login --username AWS --password-stdin 016735869948.dkr.ecr.$AWS_DEFAULT_REGION.amazonaws.com
+          - chmod 400 ~/.ssh/infra_github
+      jobs:
+        - name: update latest tag and push docker image to aws ecr
+          commands:
+            # Build the image
+            - eval "$(ssh-agent -s)" && ssh-add ~/.ssh/infra_github
+            - |
+                ./build.sh \
+                    --debug \
+                    --image-name $ECR_REGISTRY \
+                    --cuda-version 11.8.0-cudnn8 \
+                    --os ubuntu \
+                    --os-version 22.04 \
+                    --arch x86_64 \
+                    --cudagl \
+                    --devel
+
+            # Push tagged as latest
+            - docker push $ECR_REGISTRY:11.8.0-cudnn8-runtime-ubuntu22.04
+
+            # Install the semaphore CLI and authenticate
+            - curl https://storage.googleapis.com/sem-cli-releases/get.sh | bash
+            - /usr/local/bin/sem connect abyss.semaphoreci.com "$ACCESS_TOKEN"
+
+            # Trigger the next image in the chain (devtools) to rebuild
+            - |
+                 /usr/local/bin/sem rebuild workflow \
+                    "$(
+                        /usr/local/bin/sem get workflows -p devtools |
+                            grep 'master$' |
+                            head -n1 |
+                            cut -d' ' -f1
+                      )"
+promotions:
+  - name: Build, tag with commit hash, push to ECR
+    pipeline_file: build_and_push.yml
