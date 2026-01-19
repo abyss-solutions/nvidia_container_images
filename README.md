@@ -2,6 +2,10 @@
 
 This fork exists to support building `cudagl` images with `cuDNN` support from the `devel` image
 
+Users should not have to run the below command directly, as the Semaphore CI/CD setup will build and push to the AWS ECR repo below, with a tag constructed from the build parameters:
+
+    016735869948.dkr.ecr.eu-central-1.amazonaws.com/abyss/cudagl
+
 Example invocation for this use case is:
 
     ./build.sh \
