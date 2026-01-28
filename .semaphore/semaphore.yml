@@ -48,7 +48,7 @@ blocks:
                     --devel
 
             # Push tagged as latest
-            - docker push $ECR_REGISTRY:11.8.0-cudnn8-runtime-ubuntu22.04
+            - docker push $ECR_REGISTRY:11.8.0-cudnn8-devel-ubuntu22.04
 
             # Install the semaphore CLI and authenticate
             - curl https://storage.googleapis.com/sem-cli-releases/get.sh | bash
