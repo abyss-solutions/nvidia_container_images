@@ -1,0 +1,51 @@
+version: v1.0
+name: Pipeline
+agent:
+  machine:
+    type: f1-standard-4
+    os_image: ubuntu2404
+blocks:
+  - name: Build, tag with commit hash, push to GAR
+    dependencies: []
+    task:
+      env_vars:
+        - name: GAR_REGISTRY
+          value: us-docker.pkg.dev/abyss-global/cudagl/cudagl
+        # Defaults used when running outside of a parameterised promotion
+        - name: CUDA_VERSION
+          value: 11.8.0-cudnn8
+        - name: OS
+          value: ubuntu
+        - name: OS_VERSION
+          value: "22.04"
+        - name: ARCH
+          value: x86_64
+      secrets:
+        - name: fabric-web-v2-gcp
+        - name: infra-github-push-key
+      prologue:
+        commands:
+          - checkout
+          - gcloud auth activate-service-account --key-file=/home/semaphore/gcp-sa-key.json
+          - gcloud auth configure-docker us-docker.pkg.dev --quiet
+          - chmod 400 ~/.ssh/infra_github
+      jobs:
+        - name: Build - Tag with commit hash - Push to GAR
+          commands:
+            # Build the image
+            - eval "$(ssh-agent -s)" && ssh-add ~/.ssh/infra_github
+            - |
+                ./build.sh \
+                    --debug \
+                    --image-name $GAR_REGISTRY \
+                    --cuda-version $CUDA_VERSION \
+                    --os $OS \
+                    --os-version $OS_VERSION \
+                    --arch $ARCH \
+                    --cudagl \
+                    --devel
+
+            # Push tagged with commit hash (tag matches what build.sh produces for --cudagl --devel)
+            - IMAGE_TAG="${CUDA_VERSION}-devel-${OS}${OS_VERSION}"
+            - docker tag $GAR_REGISTRY:$IMAGE_TAG $GAR_REGISTRY:$SEMAPHORE_GIT_SHA
+            - docker push $GAR_REGISTRY:$SEMAPHORE_GIT_SHA

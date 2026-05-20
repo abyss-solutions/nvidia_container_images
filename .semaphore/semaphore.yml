@@ -13,33 +13,32 @@ auto_cancel:
   queued:
     when: branch != 'main'
 blocks:
-  - name: Docker update latest image and push to ECR
+  - name: Docker update latest image and push to GAR
     skip:
       when: branch != 'main'
     task:
       env_vars:
-        - name: AWS_DEFAULT_REGION
-          value: eu-central-1
-        - name: ECR_REGISTRY
-          value: 016735869948.dkr.ecr.eu-central-1.amazonaws.com/abyss/cudagl
+        - name: GAR_REGISTRY
+          value: us-docker.pkg.dev/abyss-global/cudagl/cudagl
       secrets:
-        - name: aws-ecr-secrets
+        - name: fabric-web-v2-gcp
         - name: sem-cli-access-token
         - name: infra-github-push-key
       prologue:
         commands:
           - checkout
-          - aws ecr get-login-password | docker login --username AWS --password-stdin 016735869948.dkr.ecr.$AWS_DEFAULT_REGION.amazonaws.com
+          - gcloud auth activate-service-account --key-file=/home/semaphore/gcp-sa-key.json
+          - gcloud auth configure-docker us-docker.pkg.dev --quiet
           - chmod 400 ~/.ssh/infra_github
       jobs:
-        - name: update latest tag and push docker image to aws ecr
+        - name: update latest tag and push docker image to GAR
           commands:
             # Build the image
             - eval "$(ssh-agent -s)" && ssh-add ~/.ssh/infra_github
             - |
                 ./build.sh \
                     --debug \
-                    --image-name $ECR_REGISTRY \
+                    --image-name $GAR_REGISTRY \
                     --cuda-version 11.8.0-cudnn8 \
                     --os ubuntu \
                     --os-version 22.04 \
@@ -48,7 +47,7 @@ blocks:
                     --devel
 
             # Push tagged as latest
-            - docker push $ECR_REGISTRY:11.8.0-cudnn8-devel-ubuntu22.04
+            - docker push $GAR_REGISTRY:11.8.0-cudnn8-devel-ubuntu22.04
 
             # Install the semaphore CLI and authenticate
             - curl https://storage.googleapis.com/sem-cli-releases/get.sh | bash
@@ -64,5 +63,23 @@ blocks:
                             cut -d' ' -f1
                       )"
 promotions:
-  - name: Build, tag with commit hash, push to ECR
+  - name: Build, tag with commit hash, push to GAR
     pipeline_file: build_and_push.yml
+    parameters:
+      env_vars:
+        - name: CUDA_VERSION
+          required: true
+          default_value: 11.8.0-cudnn8
+          description: CUDA version string passed to build.sh --cuda-version (e.g. 11.8.0-cudnn8, 12.2.0)
+        - name: OS
+          required: true
+          default_value: ubuntu
+          description: Target OS passed to build.sh --os (e.g. ubuntu)
+        - name: OS_VERSION
+          required: true
+          default_value: "22.04"
+          description: Target OS version passed to build.sh --os-version (e.g. 22.04, 20.04)
+        - name: ARCH
+          required: true
+          default_value: x86_64
+          description: Target architecture passed to build.sh --arch (e.g. x86_64, arm64)
