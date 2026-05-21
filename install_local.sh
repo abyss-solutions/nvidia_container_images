@@ -17,6 +17,7 @@ debug_flag=0
 dry_run=0
 use_kitpick=0
 install_devel=0
+setup_docker=0
 
 # Populated by detect_host()
 NVARCH=""
@@ -110,8 +111,22 @@ usage() {
     echo "    --cuda-version <str>  - The CUDA version to install."
     echo "    --kitpick             - Install from the kitpick directory."
     echo "    --devel               - Also install devel packages (default: base + runtime only)."
+    echo "    --docker              - Install the NVIDIA Container Toolkit and configure Docker"
+    echo "                           for GPU passthrough (can be used with or without --cuda-version)."
     echo
     exit 155
+}
+
+# Remove the legacy cuda.list if it conflicts with the modern cuda-keyring
+# sources file. This can happen regardless of whether CUDA is being installed,
+# and causes any apt-get update to fail with exit code 100.
+fix_apt_conflicts() {
+    local keyring_list="/etc/apt/sources.list.d/cuda-${OS_PATH_NAME}-${NVARCH}.list"
+    local legacy_list="/etc/apt/sources.list.d/cuda.list"
+    if [[ -f "${keyring_list}" && -f "${legacy_list}" ]]; then
+        warning "Removing conflicting ${legacy_list} (superseded by ${keyring_list})"
+        run_cmd "rm -f ${legacy_list}"
+    fi
 }
 
 detect_host() {
@@ -294,14 +309,9 @@ setup_cuda_repo() {
     msg "Setting up CUDA apt repository for ${OS_PATH_NAME}/${NVARCH}"
 
     # The cuda-keyring package creates a file named cuda-${OS_PATH_NAME}-${NVARCH}.list.
-    # If that file exists the repo is already properly configured; we just need to
-    # remove any conflicting legacy cuda.list and refresh the package index.
+    # If that file exists the repo is already properly configured.
     local keyring_list="/etc/apt/sources.list.d/cuda-${OS_PATH_NAME}-${NVARCH}.list"
     if [[ -f "${keyring_list}" ]]; then
-        if [[ -f /etc/apt/sources.list.d/cuda.list ]]; then
-            warning "Removing legacy /etc/apt/sources.list.d/cuda.list — conflicts with ${keyring_list}"
-            run_cmd "rm -f /etc/apt/sources.list.d/cuda.list"
-        fi
         msg "CUDA apt repository already configured via ${keyring_list}, skipping keyring setup"
         run_cmd "apt-get update"
         return 0
@@ -366,7 +376,39 @@ install_layer() {
 }
 
 check_vars() {
-    [[ -n "${CUDA_VERSION}" ]] || err "CUDA_VERSION argument not set!"
+    if [[ -z "${CUDA_VERSION}" && ${setup_docker} -eq 0 ]]; then
+        err "Nothing to do — specify --cuda-version and/or --docker"
+    fi
+}
+
+# Install the NVIDIA Container Toolkit and configure Docker for GPU passthrough.
+setup_docker_runtime() {
+    msg "Setting up NVIDIA Container Toolkit for Docker GPU passthrough"
+
+    command -v docker &>/dev/null || err "Docker is not installed. Install Docker before running --docker."
+
+    local keyring="/usr/share/keyrings/nvidia-container-toolkit-keyring.gpg"
+    local sources_list="/etc/apt/sources.list.d/nvidia-container-toolkit.list"
+
+    if [[ -f "${sources_list}" ]]; then
+        msg "NVIDIA Container Toolkit repository already configured (${sources_list})"
+    else
+        msg "Adding NVIDIA Container Toolkit apt repository"
+        run_cmd "apt-get update && apt-get install -y --no-install-recommends curl gnupg2"
+        run_cmd "curl -fsSL https://nvidia.github.io/libnvidia-container/gpgkey | gpg --dearmor -o ${keyring}"
+        # Download the official list file (which uses apt's $(ARCH) variable) and
+        # inject the signed-by option so apt can authenticate the packages.
+        run_cmd "curl -sL https://nvidia.github.io/libnvidia-container/stable/deb/nvidia-container-toolkit.list | sed 's#deb https://#deb [signed-by=${keyring}] https://#g' | tee ${sources_list}"
+        run_cmd "apt-get update"
+    fi
+
+    run_cmd "apt-get install -y nvidia-container-toolkit"
+
+    msg "Configuring Docker runtime"
+    run_cmd "nvidia-ctk runtime configure --runtime=docker"
+    run_cmd "systemctl restart docker"
+
+    msg "Docker GPU passthrough ready. Test with: docker run --rm --gpus all nvidia/cuda:base nvidia-smi"
 }
 
 main() {
@@ -386,6 +428,8 @@ main() {
             --devel)
                 install_devel=1
                 BASE_IMAGE_NAME=devel ;;
+            --docker)
+                setup_docker=1 ;;
             --cuda-version)
                 CUDA_VERSION="${args[(($a+1))]}"
                 debug "CUDA_VERSION=${CUDA_VERSION}"
@@ -398,6 +442,7 @@ main() {
 
     check_vars
     detect_host
+    fix_apt_conflicts
 
     local base_path
     if [[ ${use_kitpick} -eq 1 ]]; then
@@ -406,27 +451,31 @@ main() {
         base_path="${script_dir}/dist/${CUDA_VERSION}"
     fi
 
-    local os_dir="${base_path}/${OS_PATH_NAME}"
-    [[ -d "${os_dir}" ]] || err "No Dockerfiles found for ${OS_PATH_NAME} with CUDA ${CUDA_VERSION}. Not found: ${os_dir}"
+    if [[ -n "${CUDA_VERSION}" ]]; then
+        local os_dir="${base_path}/${OS_PATH_NAME}"
+        [[ -d "${os_dir}" ]] || err "No Dockerfiles found for ${OS_PATH_NAME} with CUDA ${CUDA_VERSION}. Not found: ${os_dir}"
 
-    # Set up the CUDA apt repository
-    setup_cuda_repo "${os_dir}/base/Dockerfile"
+        # Set up the CUDA apt repository
+        setup_cuda_repo "${os_dir}/base/Dockerfile"
 
-    # Install layers
-    install_layer "base"    "${os_dir}"
-    install_layer "runtime" "${os_dir}"
+        # Install layers
+        install_layer "base"    "${os_dir}"
+        install_layer "runtime" "${os_dir}"
 
-    if [[ ${install_devel} -eq 1 ]]; then
-        install_layer "devel" "${os_dir}"
+        if [[ ${install_devel} -eq 1 ]]; then
+            install_layer "devel" "${os_dir}"
+        fi
+
+        run_cmd "rm -rf /var/lib/apt/lists/*"
+        run_cmd "ldconfig"
+
+        msg "CUDA ${CUDA_VERSION} installed successfully."
+        msg "Add /usr/local/cuda/bin to your PATH to use nvcc and other CUDA tools."
     fi
 
-    run_cmd "rm -rf /var/lib/apt/lists/*"
-
-    # Update dynamic linker cache
-    run_cmd "ldconfig"
-
-    msg "CUDA ${CUDA_VERSION} installed successfully."
-    msg "Add /usr/local/cuda/bin to your PATH to use nvcc and other CUDA tools."
+    if [[ ${setup_docker} -eq 1 ]]; then
+        setup_docker_runtime
+    fi
 
     msg "${script_name} END"
 }
