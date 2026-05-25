@@ -199,11 +199,6 @@ expand() {
     echo "${text}"
 }
 
-# Collect a multi-line RUN block into a single string.
-# Sets global _run_buf and _run_has_content.
-# Reads from the open file descriptor passed via coproc/subshell — not used
-# directly; instead, callers drive a while-read loop and call _collect_run.
-
 # Extract all apt-get install package names from a Dockerfile.
 # Skips any RUN block whose content contains skip_pattern (e.g. "cuda-keyring"
 # to avoid re-processing the keyring setup block).
