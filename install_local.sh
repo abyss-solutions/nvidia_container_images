@@ -18,6 +18,7 @@ dry_run=0
 use_kitpick=0
 install_devel=0
 setup_docker=0
+install_driver=0
 
 # Populated by detect_host()
 NVARCH=""
@@ -111,6 +112,10 @@ usage() {
     echo "    --cuda-version <str>  - The CUDA version to install."
     echo "    --kitpick             - Install from the kitpick directory."
     echo "    --devel               - Also install devel packages (default: base + runtime only)."
+    echo "    --driver              - Install the NVIDIA kernel driver. When combined with"
+    echo "                           --cuda-version the minimum compatible version is derived"
+    echo "                           from the Dockerfile; otherwise the latest available is used."
+    echo "                           A reboot is required after installation."
     echo "    --docker              - Install the NVIDIA Container Toolkit and configure Docker"
     echo "                           for GPU passthrough (can be used with or without --cuda-version)."
     echo
@@ -127,6 +132,93 @@ fix_apt_conflicts() {
         warning "Removing conflicting ${legacy_list} (superseded by ${keyring_list})"
         run_cmd "rm -f ${legacy_list}"
     fi
+}
+
+# Ensure the CUDA apt repo is available (required for up-to-date driver packages
+# even when not installing CUDA itself). Uses the modern cuda-keyring .deb approach.
+ensure_cuda_repo() {
+    local keyring_list="/etc/apt/sources.list.d/cuda-${OS_PATH_NAME}-${NVARCH}.list"
+    if [[ -f "${keyring_list}" ]]; then
+        debug "CUDA apt repo already configured"
+        return 0
+    fi
+    msg "Setting up CUDA apt repo (needed for driver packages)"
+    run_cmd "apt-get update && apt-get install -y --no-install-recommends curl"
+    run_cmd "curl -fsSLO https://developer.download.nvidia.com/compute/cuda/repos/${OS_PATH_NAME}/${NVARCH}/cuda-keyring_1.1-1_all.deb"
+    run_cmd "dpkg -i cuda-keyring_1.1-1_all.deb && rm -f cuda-keyring_1.1-1_all.deb"
+    run_cmd "apt-get update"
+}
+
+# Parse the minimum required driver version from NVIDIA_REQUIRE_CUDA in _envs.
+# Returns the lowest driver>= value, e.g. "535" for CUDA 12.9.
+min_driver_from_cuda() {
+    local require_cuda="${_envs[NVIDIA_REQUIRE_CUDA]:-}"
+    [[ -n "${require_cuda}" ]] || { echo ""; return; }
+    echo "${require_cuda}" | grep -oP 'driver>=\K[0-9]+' | sort -V | head -1
+}
+
+# Find the latest nvidia-driver-NNN package (proprietary, non-server, non-open)
+# in apt with NNN >= min_version. Prints the package name, e.g. "nvidia-driver-595".
+find_latest_driver_pkg() {
+    local min_version="${1:-0}"
+    local best=""
+    local ver
+    while read -r pkg; do
+        ver="${pkg#nvidia-driver-}"
+        if [[ "${ver}" -ge "${min_version}" ]]; then
+            best="${pkg}"
+        fi
+    done < <(apt-cache pkgnames "nvidia-driver-" 2>/dev/null \
+                | grep -E "^nvidia-driver-[0-9]+$" \
+                | sort -t- -k3 -V)
+    echo "${best}"
+}
+
+# Install the NVIDIA kernel driver. Derives the minimum compatible version from
+# the CUDA Dockerfile when --cuda-version is set; otherwise picks the latest
+# available driver unconditionally.
+install_nvidia_driver() {
+    msg "Installing NVIDIA driver"
+
+    ensure_cuda_repo
+
+    local min_version=""
+    if [[ -n "${CUDA_VERSION}" ]]; then
+        local base_path
+        if [[ ${use_kitpick} -eq 1 ]]; then
+            base_path="${script_dir}/kitpick"
+        else
+            base_path="${script_dir}/dist/${CUDA_VERSION}"
+        fi
+        local base_dockerfile="${base_path}/${OS_PATH_NAME}/base/Dockerfile"
+        if [[ -f "${base_dockerfile}" ]]; then
+            parse_envs "${base_dockerfile}"
+            min_version="$(min_driver_from_cuda)"
+            debug "Minimum driver version for CUDA ${CUDA_VERSION}: ${min_version}"
+        fi
+    fi
+
+    local driver_pkg
+    driver_pkg="$(find_latest_driver_pkg "${min_version}")"
+
+    if [[ -z "${driver_pkg}" ]]; then
+        if [[ -n "${min_version}" ]]; then
+            err "No nvidia-driver-NNN package found in apt with NNN >= ${min_version}. Run apt-get update and retry."
+        else
+            err "No nvidia-driver-NNN package found in apt. Run apt-get update and retry."
+        fi
+    fi
+
+    if [[ -n "${min_version}" ]]; then
+        msg "Selected ${driver_pkg} (CUDA ${CUDA_VERSION} requires driver >= ${min_version})"
+    else
+        msg "Selected ${driver_pkg} (latest available)"
+    fi
+
+    run_cmd "apt-get install -y ${driver_pkg}"
+    run_cmd "rm -rf /var/lib/apt/lists/*"
+
+    msg "Driver installed. A reboot is required to load the new kernel module."
 }
 
 detect_host() {
@@ -371,8 +463,8 @@ install_layer() {
 }
 
 check_vars() {
-    if [[ -z "${CUDA_VERSION}" && ${setup_docker} -eq 0 ]]; then
-        err "Nothing to do — specify --cuda-version and/or --docker"
+    if [[ -z "${CUDA_VERSION}" && ${setup_docker} -eq 0 && ${install_driver} -eq 0 ]]; then
+        err "Nothing to do — specify --cuda-version, --driver, and/or --docker"
     fi
 }
 
@@ -423,6 +515,8 @@ main() {
             --devel)
                 install_devel=1
                 BASE_IMAGE_NAME=devel ;;
+            --driver)
+                install_driver=1 ;;
             --docker)
                 setup_docker=1 ;;
             --cuda-version)
@@ -466,6 +560,10 @@ main() {
 
         msg "CUDA ${CUDA_VERSION} installed successfully."
         msg "Add /usr/local/cuda/bin to your PATH to use nvcc and other CUDA tools."
+    fi
+
+    if [[ ${install_driver} -eq 1 ]]; then
+        install_nvidia_driver
     fi
 
     if [[ ${setup_docker} -eq 1 ]]; then
