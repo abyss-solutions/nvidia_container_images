@@ -49,19 +49,19 @@ blocks:
             # Push tagged as latest
             - docker push $GAR_REGISTRY:11.8.0-cudnn8-devel-ubuntu22.04
 
-            # Install the semaphore CLI and authenticate
-            - curl https://storage.googleapis.com/sem-cli-releases/get.sh | bash
-            - /usr/local/bin/sem connect abyss.semaphoreci.com "$ACCESS_TOKEN"
-
-            # Trigger the next image in the chain (devtools) to rebuild
+            # Trigger the next image in the chain (devtools) to rebuild, via Semaphore's
+            # "run workflow" API rather than inferring a workflow to rebuild from
+            # `sem get workflows`, which can't distinguish differently-purposed workflows
+            # sharing the same branch label. Explicitly naming pipeline_file sidesteps
+            # that ambiguity entirely instead of detecting it after the fact.
+            #
+            # There's no Semaphore API/CLI endpoint to resolve a project name to its UUID,
+            # so this is hardcoded (from the Semaphore dashboard's project URL).
             - |
-                 /usr/local/bin/sem rebuild workflow \
-                    "$(
-                        /usr/local/bin/sem get workflows -p devtools |
-                            grep 'master$' |
-                            head -n1 |
-                            cut -d' ' -f1
-                      )"
+                curl --fail --request POST "https://abyss.semaphoreci.com/api/v1alpha/plumber-workflows" \
+                    --header "Authorization: Token ${ACCESS_TOKEN}" \
+                    --header "Content-Type: application/json" \
+                    --data '{"project_id": "ae6f5d08-3c52-42f0-b3ab-812839fc6730", "reference": "refs/heads/master", "pipeline_file": ".semaphore/semaphore.yml"}'
 promotions:
   - name: Build, tag with commit hash, push to GAR
     pipeline_file: build_and_push.yml
